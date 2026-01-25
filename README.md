@@ -1,6 +1,10 @@
 # AI Slop Detector 🔍  
 Detect AI-generated text — fully local, fully private.
 
+<p align="center">
+  <img src="icons/base_image.png" alt="AI Slop Detector demo" width="500">
+</p>
+
 *A fine-tuned 270M Q4-quantized model running entirely in your browser using Wllama on CPU. No API keys. No cloud. No data leakage.*
 
 ## Performance
