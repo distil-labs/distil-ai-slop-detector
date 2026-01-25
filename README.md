@@ -45,8 +45,14 @@ That’s it! 🎉
 The model runs entirely in your browser — **no data ever leaves your machine**.
 
 <p align="center">
-  <img src="icons/demo.png" alt="AI Slop Detector demo" width="500">
+  <img src="icons/demo_ai.png" alt="AI-generated example" width="350">
+  <img src="icons/demo_human.png" alt="Human-written example" width="350">
 </p>
+
+<p align="center">
+  <sub>Left: AI-generated text · Right: Human-written text</sub>
+</p>
+
 
 ## The Problem & The Goal
 
