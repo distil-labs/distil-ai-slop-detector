@@ -44,6 +44,10 @@ cd ai-slop-detector
 That’s it! 🎉  
 The model runs entirely in your browser — **no data ever leaves your machine**.
 
+<p align="center">
+  <img src="icons/demo.png" alt="AI Slop Detector demo" width="500">
+</p>
+
 ## The Problem & The Goal
 
 AI-generated “slop” is flooding the internet, blurring the line between human writing and machine-generated content.
