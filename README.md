@@ -186,6 +186,40 @@ Informal testing was conducted on diverse, real-world text sources to evaluate r
 
 ## FAQ
 
+### Q: What is the code structure of this project?
+**A:** The repository is organized into two main parts: the browser extension code and the training data/configuration.
+```
+ai-slop-detector/
+├── background.js        # Service worker responsible for coordinating model loading
+├── manifest.json        # Chrome extension configuration
+├── offscreen.html       # Offscreen document container
+├── offscreen.js         # Executes the model in an isolated context
+├── popup.html           # Extension popup UI
+├── popup.js             # Popup UI logic
+├── icons/               # Extension icons and demo images
+├── wllama/              # WebAssembly runtime for model inference
+│   └── esm/             # Wllama ESM build files
+├── data/                # Training assets (not used at runtime)
+│   ├── config.yaml      # Training configuration
+│   ├── job_description.json # Task definition
+│   ├── train.csv        # Training dataset
+│   └── test.csv         # Evaluation dataset
+└── README.md            # Project documentation
+
+```
+
+### Q: What runs in the browser and what is used for training?
+**A:**  
+- **Browser:** JavaScript code that runs entirely in your browser to detect AI-generated text.  
+- **Training (`/data/`):** Training data and configuration files used to create the small language model (SLM) via knowledge distillation. These are not used during inference.
+
+---
+### Q: Where is the model hosted and how is it loaded?
+**A:** The trained and quantized model (`model-q4.gguf`) is hosted on **Hugging Face**.  
+It is downloaded **once on first use**, cached by the browser, and then loaded locally for all future runs.
+
+After the initial download, the extension works **fully offline**.
+
 ### Q: Is my text sent to any server?
 **A:** No. The model is downloaded once from Hugging Face (~253 MB) and then runs entirely in your browser. Your text **never leaves your machine**.
 
