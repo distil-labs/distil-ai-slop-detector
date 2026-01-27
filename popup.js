@@ -1,14 +1,4 @@
-// popup.js - Enhanced UI version
-import { Wllama } from './wllama/esm/index.js';
-
-const CONFIG_PATHS = {
-  'single-thread/wllama.wasm': chrome.runtime.getURL('wllama/esm/single-thread/wllama.wasm'),
-  'multi-thread/wllama.wasm': chrome.runtime.getURL('wllama/esm/multi-thread/wllama.wasm'),
-  'multi-thread/wllama.worker.mjs': chrome.runtime.getURL('wllama/esm/multi-thread/wllama.worker.mjs'),
-};
-
-let wllama = null;
-let isModelLoaded = false;
+// popup.js - Communicates with background service worker
 
 // DOM elements
 const statusDiv = document.getElementById('status');
@@ -22,50 +12,189 @@ const resultDiv = document.getElementById('result');
 const resultIcon = document.getElementById('result-icon');
 const resultText = document.getElementById('result-text');
 const resultConfidence = document.getElementById('result-confidence');
+const retryBtn = document.getElementById('retry-btn');
 
-// Initialize
-document.addEventListener('DOMContentLoaded', () => {
-  initWllama();
+let isModelReady = false;
+
+// Initialize on popup open
+document.addEventListener('DOMContentLoaded', async () => {
+  console.log('🎨 Popup opened');
   
+  // Check model status
+  await checkModelStatus();
+  
+  // Setup event listeners
+  setupEventListeners();
+  
+  // Listen for background messages
+  chrome.runtime.onMessage.addListener((message) => {
+    console.log('📨 Received message:', message.type);
+    
+    if (message.type === 'MODEL_PROGRESS') {
+      updateProgress(message.progress);
+    } else if (message.type === 'MODEL_READY') {
+      onModelReady();
+    } else if (message.type === 'MODEL_ERROR') {
+      onModelError(message.error);
+    }
+  });
+});
+
+function setupEventListeners() {
   // Character counter
   inputText.addEventListener('input', () => {
     charCount.textContent = inputText.value.length;
+  });
+
+  // Retry button
+  retryBtn.addEventListener('click', async () => {
+    retryBtn.style.display = 'none';
+    statusDiv.className = 'status loading';
+    statusIcon.textContent = '⏳';
+    statusText.textContent = 'Retrying...';
+    
+    const response = await chrome.runtime.sendMessage({ type: 'RETRY_LOAD' });
+    console.log('Retry initiated:', response);
   });
   
   // Analyze button
   checkBtn.addEventListener('click', async () => {
     const text = inputText.value.trim();
+    
     if (!text) {
       showError('Please enter some text to analyze');
       return;
     }
     
-    if (text.length < 10) {
-      showError('Please enter at least 10 characters for accurate analysis');
+    if (text.length < 20) {
+      showError('Please enter at least 20 characters for accurate analysis');
       return;
     }
     
-    setAnalyzingState(true);
-    hideResult();
+    await analyzeText(text);
+  });
+  
+  // Ctrl+Enter shortcut
+  inputText.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.key === 'Enter') {
+      checkBtn.click();
+    }
+  });
+}
+
+async function checkModelStatus() {
+  try {
+    statusDiv.className = 'status loading';
+    statusIcon.textContent = '⏳';
+    statusText.textContent = 'Checking model status...';
     
-    try {
-      const result = await classifyText(text);
-      showResult(result);
-    } catch (error) {
-      console.error('Classification error:', error);
-      showError('Analysis failed: ' + error.message);
+    const response = await chrome.runtime.sendMessage({ type: 'CHECK_STATUS' });
+    
+    console.log('Model status:', response);
+    
+    if (response.isLoaded) {
+      onModelReady();
+    } else if (response.isLoading) {
+      statusText.textContent = 'Loading model...';
+      updateProgress(response.progress);
+    } else {
+      // Start loading
+      statusText.textContent = 'Initializing model...';
+      await chrome.runtime.sendMessage({ type: 'INIT_MODEL' });
     }
     
-    setAnalyzingState(false);
-  });
-});
+  } catch (error) {
+    console.error('Failed to check status:', error);
+    onModelError(error.message);
+  }
+}
+
+function updateProgress(progress) {
+  progressFill.style.width = `${progress}%`;
+  
+  if (progress < 100) {
+    statusText.textContent = `Loading model... ${progress}%`;
+  } else {
+    statusText.textContent = 'Finalizing...';
+  }
+}
+
+function onModelReady() {
+  isModelReady = true;
+  statusDiv.className = 'status ready';
+  statusIcon.textContent = '✅';
+  statusText.textContent = 'Model ready • You can analyze text now';
+  progressFill.style.width = '100%';
+  checkBtn.disabled = false;
+  retryBtn.style.display = 'none';
+  
+  console.log('✅ Model is ready!');
+}
+
+function onModelError(error) {
+  isModelReady = false;
+  statusDiv.className = 'status error';
+  statusIcon.textContent = '❌';
+  statusText.textContent = error || 'Failed to load model';
+  retryBtn.style.display = 'block';
+  checkBtn.disabled = true;
+  
+  console.error('❌ Model error:', error);
+}
+
+async function analyzeText(text) {
+  if (!isModelReady) {
+    showError('Model not ready yet');
+    return;
+  }
+  
+  // Show analyzing state
+  checkBtn.disabled = true;
+  checkBtn.classList.add('analyzing');
+  checkBtn.textContent = 'Analyzing';
+  
+  statusDiv.className = 'status loading';
+  statusIcon.textContent = '🤔';
+  statusText.textContent = 'Analyzing text...';
+  
+  hideResult();
+  
+  try {
+    console.log('🔍 Sending text for classification...');
+    
+    const response = await chrome.runtime.sendMessage({
+      type: 'CLASSIFY_TEXT',
+      text: text
+    });
+    
+    if (response.success) {
+      showResult(response.result);
+      
+      // Reset status
+      statusDiv.className = 'status ready';
+      statusIcon.textContent = '✅';
+      statusText.textContent = 'Model ready';
+    } else {
+      showError(response.error || 'Classification failed');
+    }
+    
+  } catch (error) {
+    console.error('Analysis error:', error);
+    showError('Analysis failed: ' + error.message);
+  } finally {
+    checkBtn.disabled = false;
+    checkBtn.classList.remove('analyzing');
+    checkBtn.textContent = 'Analyze Text';
+  }
+}
 
 function showError(message) {
   statusDiv.className = 'status error';
   statusIcon.textContent = '❌';
   statusText.textContent = message;
+  
   setTimeout(() => {
-    if (isModelLoaded) {
+    if (isModelReady) {
       statusDiv.className = 'status ready';
       statusIcon.textContent = '✅';
       statusText.textContent = 'Model ready';
@@ -73,140 +202,8 @@ function showError(message) {
   }, 3000);
 }
 
-function setAnalyzingState(analyzing) {
-  checkBtn.disabled = analyzing || !isModelLoaded;
-  if (analyzing) {
-    checkBtn.classList.add('analyzing');
-    statusDiv.className = 'status loading';
-    statusIcon.textContent = '🤔';
-    statusText.textContent = 'Analyzing...';
-  } else {
-    checkBtn.classList.remove('analyzing');
-    if (isModelLoaded) {
-      statusDiv.className = 'status ready';
-      statusIcon.textContent = '✅';
-      statusText.textContent = 'Model ready';
-    }
-  }
-}
-
 function hideResult() {
   resultDiv.classList.remove('show');
-}
-
-async function initWllama() {
-  try {
-    console.log('🦙 Initializing wllama...');
-    
-    wllama = new Wllama(CONFIG_PATHS, {
-      logger: {
-        debug: () => {},
-        log: (...args) => console.log('🦙', ...args),
-        warn: (...args) => {
-          const msg = args.join(' ');
-          const ignore = ['special_eos_id', 'munmap failed', 'n_ctx_seq', 'n_ctx_train', 'llama_kv_cache_iswa'];
-          if (!ignore.some(w => msg.includes(w))) {
-            console.warn('⚠️', ...args);
-          }
-        },
-        error: (...args) => console.error('❌', ...args),
-      }
-    });
-    
-    await loadModel();
-  } catch (error) {
-    console.error('Initialization error:', error);
-    statusDiv.className = 'status error';
-    statusIcon.textContent = '❌';
-    statusText.textContent = 'Failed to initialize';
-  }
-}
-
-async function loadModel() {
-  if (isModelLoaded) return;
-  
-  console.log('⏳ Loading model from HuggingFace...');
-  statusText.textContent = 'Downloading model (253 MB)...';
-  
-  const modelUrl = 'https://huggingface.co/Priyansu19/ai-slop-gemma-fp32_gguf/resolve/main/model-q4.gguf';
-  
-  try {
-    await wllama.loadModelFromUrl(modelUrl, {
-      n_ctx: 4096,
-      n_threads: 4,
-      progressCallback: ({ loaded, total }) => {
-        let progress = 0;
-        if (total && total > 0 && isFinite(total)) {
-          progress = Math.round((loaded / total) * 100);
-        } else {
-          progress = Math.min(Math.round(loaded / 1000000), 99);
-        }
-        progress = isNaN(progress) ? 99 : progress;
-        progressFill.style.width = `${progress}%`;
-        
-        if (progress < 100) {
-          statusText.textContent = `Downloading model... ${progress}%`;
-        } else {
-          statusText.textContent = 'Loading into memory...';
-        }
-        
-        console.log(`📊 Loading: ${progress}%`);
-      }
-    });
-    
-    isModelLoaded = true;
-    statusDiv.className = 'status ready';
-    statusIcon.textContent = '✅';
-    statusText.textContent = 'Model ready';
-    checkBtn.disabled = false;
-    console.log('✅ Model loaded!');
-    
-  } catch (error) {
-    console.error('❌ Failed to load model:', error);
-    statusDiv.className = 'status error';
-    statusIcon.textContent = '❌';
-    statusText.textContent = 'Failed to load model';
-    throw error;
-  }
-}
-
-async function classifyText(text) {
-  if (!isModelLoaded) {
-    throw new Error('Model not loaded');
-  }
-  
-  console.log('🔍 Classifying:', text.substring(0, 50) + '...');
-  
-  const prompt = `<start_of_turn>user
-Classify this text as exactly 'ai_generated' or 'human_written':
-
-"${text}"
-
-<end_of_turn>
-<start_of_turn>model
-`;
-
-  const output = await wllama.createCompletion(prompt, {
-    nPredict: 5,
-    sampling: {
-      temp: 0.0,
-      top_k: 1,
-      top_p: 1.0,
-    },
-    stop: ['\n', ' ', '<end_of_turn>', '<start_of_turn>'],
-  });
-  
-  console.log('📝 Raw output:', JSON.stringify(output));
-  
-  const result = output.toLowerCase().trim();
-  
-  if (result.includes('ai_generated') || result.startsWith('ai')) {
-    return { label: 'ai_generated', confidence: 95, raw: output };
-  } else if (result.includes('human_written') || result.startsWith('human')) {
-    return { label: 'human_written', confidence: 95, raw: output };
-  } else {
-    return { label: 'uncertain', confidence: 50, raw: output };
-  }
 }
 
 function showResult(result) {
@@ -215,7 +212,7 @@ function showResult(result) {
       text: 'AI Generated', 
       icon: '🤖', 
       class: 'ai',
-      desc: 'This text shows patterns typical of AI generation'
+      desc: 'This text shows strong patterns typical of AI generation'
     },
     'human_written': { 
       text: 'Human Written', 
@@ -224,10 +221,10 @@ function showResult(result) {
       desc: 'This text appears to be written by a human'
     },
     'uncertain': { 
-      text: 'Probably AI-written', 
+      text: 'Uncertain', 
       icon: '⚠️', 
       class: 'uncertain',
-      desc: 'Could not determine with high confidence'
+      desc: 'Could not determine with high confidence, likely AI-generated'
     }
   };
   
@@ -239,5 +236,5 @@ function showResult(result) {
   resultConfidence.textContent = `${display.desc} • ${result.confidence}% confidence`;
   resultDiv.classList.add('show');
   
-  console.log('✅ Result:', result);
+  console.log('✅ Result displayed:', result);
 }
