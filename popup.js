@@ -317,7 +317,7 @@ function showResult(result) {
       text: 'AI Generated', 
       icon: '🤖', 
       class: 'ai',
-      desc: 'This text shows strong patterns typical of AI generation'
+      desc: 'This text shows patterns typical of AI generation'
     },
     'human_written': { 
       text: 'Human Written', 
@@ -329,7 +329,7 @@ function showResult(result) {
       text: 'Uncertain', 
       icon: '⚠️', 
       class: 'uncertain',
-      desc: 'Could not determine with high confidence, likely AI-generated'
+      desc: 'Could not determine with high confidence'
     }
   };
   
@@ -338,10 +338,10 @@ function showResult(result) {
   resultDiv.className = 'result ' + display.class;
   resultIcon.textContent = display.icon;
   resultText.textContent = display.text;
-  resultConfidence.textContent = `${display.desc} • ${result.confidence}% confidence`;
+  resultConfidence.textContent = display.desc; // Just description, no fake percentage
   resultDiv.classList.add('show');
   
-  console.log('✅ Result displayed:', result);
+  console.log('✅ Classification result:', result);
 }
 
 // Diagnostic functions

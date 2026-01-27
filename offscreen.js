@@ -198,12 +198,13 @@ Classify this text as exactly 'ai_generated' or 'human_written':
 
   const normalized = output.toLowerCase().trim();
 
+  // Return label only, no fake confidence scores
   if (normalized.includes('ai_generated') || normalized.startsWith('ai')) {
-    return { label: 'ai_generated', confidence: 95, raw: output };
+    return { label: 'ai_generated', raw: output };
   } else if (normalized.includes('human_written') || normalized.startsWith('human')) {
-    return { label: 'human_written', confidence: 90, raw: output };
+    return { label: 'human_written', raw: output };
   } else {
-    return { label: 'uncertain', confidence: 60, raw: output };
+    return { label: 'uncertain', raw: output };
   }
 }
 
