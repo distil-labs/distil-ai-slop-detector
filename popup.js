@@ -15,16 +15,25 @@ const resultConfidence = document.getElementById('result-confidence');
 const retryBtn = document.getElementById('retry-btn');
 
 let isModelReady = false;
+let startTime = null;
+let updateInterval = null;
 
 // Initialize on popup open
 document.addEventListener('DOMContentLoaded', async () => {
   console.log('🎨 Popup opened');
+  startTime = Date.now();
+  
+  // Check storage info
+  checkStorageInfo();
   
   // Check model status
   await checkModelStatus();
   
   // Setup event listeners
   setupEventListeners();
+  
+  // Start diagnostic timer
+  startDiagnosticTimer();
   
   // Listen for background messages
   chrome.runtime.onMessage.addListener((message) => {
@@ -41,45 +50,69 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 function setupEventListeners() {
+  // Debug toggle
+  const debugToggle = document.getElementById('debug-toggle');
+  if (debugToggle) {
+    debugToggle.addEventListener('click', () => {
+      const diagnostic = document.getElementById('diagnostic');
+      if (diagnostic) {
+        diagnostic.classList.toggle('hidden');
+      }
+    });
+  }
+  
   // Character counter
-  inputText.addEventListener('input', () => {
-    charCount.textContent = inputText.value.length;
-  });
+  if (inputText) {
+    inputText.addEventListener('input', () => {
+      if (charCount) {
+        charCount.textContent = inputText.value.length;
+      }
+    });
+  }
 
   // Retry button
-  retryBtn.addEventListener('click', async () => {
-    retryBtn.style.display = 'none';
-    statusDiv.className = 'status loading';
-    statusIcon.textContent = '⏳';
-    statusText.textContent = 'Retrying...';
-    
-    const response = await chrome.runtime.sendMessage({ type: 'RETRY_LOAD' });
-    console.log('Retry initiated:', response);
-  });
+  if (retryBtn) {
+    retryBtn.addEventListener('click', async () => {
+      retryBtn.style.display = 'none';
+      statusDiv.className = 'status loading';
+      statusIcon.textContent = '⏳';
+      statusText.textContent = 'Retrying...';
+      startTime = Date.now();
+      
+      const response = await chrome.runtime.sendMessage({ type: 'RETRY_LOAD' });
+      console.log('Retry initiated:', response);
+    });
+  }
   
   // Analyze button
-  checkBtn.addEventListener('click', async () => {
-    const text = inputText.value.trim();
-    
-    if (!text) {
-      showError('Please enter some text to analyze');
-      return;
-    }
-    
-    if (text.length < 20) {
-      showError('Please enter at least 20 characters for accurate analysis');
-      return;
-    }
-    
-    await analyzeText(text);
-  });
+  if (checkBtn) {
+    checkBtn.addEventListener('click', async () => {
+      const text = inputText.value.trim();
+      
+      if (!text) {
+        showError('Please enter some text to analyze');
+        return;
+      }
+      
+      if (text.length < 20) {
+        showError('Please enter at least 20 characters for accurate analysis');
+        return;
+      }
+      
+      await analyzeText(text);
+    });
+  }
   
   // Ctrl+Enter shortcut
-  inputText.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && e.key === 'Enter') {
-      checkBtn.click();
-    }
-  });
+  if (inputText) {
+    inputText.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && e.key === 'Enter') {
+        if (checkBtn) {
+          checkBtn.click();
+        }
+      }
+    });
+  }
 }
 
 async function checkModelStatus() {
@@ -91,22 +124,70 @@ async function checkModelStatus() {
     const response = await chrome.runtime.sendMessage({ type: 'CHECK_STATUS' });
     
     console.log('Model status:', response);
+    updateDiagnostics(response);
     
     if (response.isLoaded) {
       onModelReady();
     } else if (response.isLoading) {
-      statusText.textContent = 'Loading model...';
+      statusText.textContent = 'Model is loading...';
       updateProgress(response.progress);
+      
+      // Poll for status updates
+      pollModelStatus();
     } else {
       // Start loading
       statusText.textContent = 'Initializing model...';
       await chrome.runtime.sendMessage({ type: 'INIT_MODEL' });
+      
+      // Start polling for updates
+      pollModelStatus();
     }
     
   } catch (error) {
     console.error('Failed to check status:', error);
     onModelError(error.message);
   }
+}
+
+// Poll for model status updates
+let pollInterval = null;
+function pollModelStatus() {
+  // Clear any existing interval
+  if (pollInterval) {
+    clearInterval(pollInterval);
+  }
+  
+  console.log('📡 Starting status polling...');
+  
+  pollInterval = setInterval(async () => {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'CHECK_STATUS' });
+      
+      updateDiagnostics(response);
+      
+      if (response.isLoaded) {
+        console.log('✅ Polling detected model ready');
+        clearInterval(pollInterval);
+        pollInterval = null;
+        onModelReady();
+      } else if (response.isLoading) {
+        updateProgress(response.progress);
+      }
+    } catch (error) {
+      console.error('Polling error:', error);
+      clearInterval(pollInterval);
+      pollInterval = null;
+    }
+  }, 1000); // Poll every second
+  
+  // Stop polling after 2 minutes
+  setTimeout(() => {
+    if (pollInterval) {
+      clearInterval(pollInterval);
+      pollInterval = null;
+      console.warn('⚠️ Polling timeout');
+    }
+  }, 120000);
 }
 
 function updateProgress(progress) {
@@ -121,9 +202,16 @@ function updateProgress(progress) {
 
 function onModelReady() {
   isModelReady = true;
+  
+  // Clear polling if active
+  if (pollInterval) {
+    clearInterval(pollInterval);
+    pollInterval = null;
+  }
+  
   statusDiv.className = 'status ready';
   statusIcon.textContent = '✅';
-  statusText.textContent = 'Model ready • You can analyze text now';
+  statusText.textContent = 'Model ready • Press Ctrl+Enter to analyze';
   progressFill.style.width = '100%';
   checkBtn.disabled = false;
   retryBtn.style.display = 'none';
@@ -144,8 +232,25 @@ function onModelError(error) {
 
 async function analyzeText(text) {
   if (!isModelReady) {
-    showError('Model not ready yet');
+    showError('Model not ready yet, please wait...');
     return;
+  }
+  
+  // Double-check with background before analyzing
+  try {
+    const status = await chrome.runtime.sendMessage({ type: 'CHECK_STATUS' });
+    
+    if (!status.isLoaded) {
+      showError('Model is still loading. Please wait a moment.');
+      
+      // Start polling if not already
+      if (!pollInterval) {
+        pollModelStatus();
+      }
+      return;
+    }
+  } catch (error) {
+    console.error('Status check failed:', error);
   }
   
   // Show analyzing state
@@ -237,4 +342,56 @@ function showResult(result) {
   resultDiv.classList.add('show');
   
   console.log('✅ Result displayed:', result);
+}
+
+// Diagnostic functions
+function startDiagnosticTimer() {
+  updateInterval = setInterval(() => {
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    const timeEl = document.getElementById('diag-time');
+    if (timeEl) {
+      timeEl.textContent = `${elapsed}s`;
+    }
+  }, 100);
+}
+
+async function checkStorageInfo() {
+  try {
+    const estimate = await navigator.storage.estimate();
+    const usedMB = (estimate.usage / (1024 * 1024)).toFixed(0);
+    
+    const cacheEl = document.getElementById('diag-cache');
+    if (cacheEl) {
+      if (usedMB > 300) {
+        cacheEl.textContent = `${usedMB} MB (cached)`;
+      } else {
+        cacheEl.textContent = 'not cached';
+      }
+    }
+  } catch (e) {
+    const cacheEl = document.getElementById('diag-cache');
+    if (cacheEl) {
+      cacheEl.textContent = 'unknown';
+    }
+  }
+}
+
+function updateDiagnostics(status) {
+  const diagStatus = document.getElementById('diag-status');
+  const diagLoaded = document.getElementById('diag-loaded');
+  const diagLoading = document.getElementById('diag-loading');
+  const diagProgress = document.getElementById('diag-progress');
+  
+  if (diagStatus) {
+    diagStatus.textContent = status.isLoaded ? 'ready' : status.isLoading ? 'loading' : 'waiting';
+  }
+  if (diagLoaded) {
+    diagLoaded.textContent = status.isLoaded ? 'true' : 'false';
+  }
+  if (diagLoading) {
+    diagLoading.textContent = status.isLoading ? 'true' : 'false';
+  }
+  if (diagProgress) {
+    diagProgress.textContent = `${status.progress || 0}%`;
+  }
 }

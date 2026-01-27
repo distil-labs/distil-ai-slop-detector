@@ -12,8 +12,12 @@ const MODEL_URL = 'https://huggingface.co/Priyansu19/ai-slop-gemma-fp32_gguf/res
 let wllama = null;
 let isModelLoaded = false;
 let isLoading = false;
+let loadingPromise = null; // Track ongoing loading
 
 console.log('🎬 Offscreen document started');
+
+// DON'T auto-initialize - let background control it
+// (Removed auto-init to prevent race condition)
 
 // Listen for messages from background.js
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -73,83 +77,94 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 async function loadModel() {
-  if (isModelLoaded || isLoading) {
-    console.log('⏩ Model already loaded or loading');
-    return;
+  // If already loaded, return immediately
+  if (isModelLoaded) {
+    console.log('⏩ Model already loaded in offscreen');
+    return loadingPromise || Promise.resolve();
+  }
+  
+  // If already loading, return the existing promise
+  if (isLoading && loadingPromise) {
+    console.log('⏩ Already loading in offscreen, waiting...');
+    return loadingPromise;
   }
 
   isLoading = true;
   const startTime = Date.now();
 
-  try {
-    console.log('🦙 Initializing Wllama in offscreen...');
-    console.log('⏰ Start time:', new Date().toLocaleTimeString());
-    
-    wllama = new Wllama(CONFIG_PATHS, {
-      logger: {
-        debug: () => {},
-        log: (...args) => console.log('🦙', ...args),
-        warn: (...args) => {
-          const msg = args.join(' ');
-          const ignore = ['special_eos_id', 'munmap failed', 'n_ctx_seq', 'n_ctx_train', 'llama_kv_cache'];
-          if (!ignore.some(w => msg.includes(w))) {
-            console.warn('⚠️', ...args);
-          }
-        },
-        error: (...args) => console.error('❌', ...args),
-      }
-    });
-
-    console.log('📥 Loading model:', MODEL_URL);
-    console.log('💾 Size: ~253 MB (cached after first download)');
-
-    let lastProgress = 0;
-    await wllama.loadModelFromUrl(MODEL_URL, {
-      n_ctx: 2048,
-      n_threads: navigator.hardwareConcurrency || 4,
-      progressCallback: ({ loaded, total }) => {
-        if (total && total > 0) {
-          const progress = Math.min(Math.round((loaded / total) * 100), 99);
-          
-          // Only log every 10% to reduce spam
-          if (progress >= lastProgress + 10) {
-            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-            console.log(`📊 Progress: ${progress}% (${elapsed}s elapsed)`);
-            lastProgress = progress;
-          }
-          
-          // Send progress to background
-          chrome.runtime.sendMessage({
-            type: 'MODEL_PROGRESS',
-            progress: progress
-          }).catch(() => {});
+  loadingPromise = (async () => {
+    try {
+      console.log('🦙 Initializing Wllama in offscreen...');
+      console.log('⏰ Start time:', new Date().toLocaleTimeString());
+      
+      wllama = new Wllama(CONFIG_PATHS, {
+        logger: {
+          debug: () => {},
+          log: (...args) => console.log('🦙', ...args),
+          warn: (...args) => {
+            const msg = args.join(' ');
+            const ignore = ['special_eos_id', 'munmap failed', 'n_ctx_seq', 'n_ctx_train', 'llama_kv_cache'];
+            if (!ignore.some(w => msg.includes(w))) {
+              console.warn('⚠️', ...args);
+            }
+          },
+          error: (...args) => console.error('❌', ...args),
         }
-      }
-    });
+      });
 
-    const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
-    isModelLoaded = true;
-    console.log(`✅ Model loaded in offscreen! Total time: ${totalTime}s`);
+      console.log('📥 Loading model:', MODEL_URL);
+      console.log('💾 Size: ~253 MB (cached after first download)');
 
-    // Notify background
-    chrome.runtime.sendMessage({
-      type: 'MODEL_READY'
-    }).catch(() => {});
+      let lastProgress = 0;
+      await wllama.loadModelFromUrl(MODEL_URL, {
+        n_ctx: 2048,
+        n_threads: navigator.hardwareConcurrency || 4,
+        progressCallback: ({ loaded, total }) => {
+          if (total && total > 0) {
+            const progress = Math.min(Math.round((loaded / total) * 100), 99);
+            
+            // Only log every 10% to reduce spam
+            if (progress >= lastProgress + 10) {
+              const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+              console.log(`📊 Progress: ${progress}% (${elapsed}s elapsed)`);
+              lastProgress = progress;
+            }
+            
+            // Send progress to background
+            chrome.runtime.sendMessage({
+              type: 'MODEL_PROGRESS',
+              progress: progress
+            }).catch(() => {});
+          }
+        }
+      });
 
-  } catch (error) {
-    const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.error(`❌ Model loading failed after ${totalTime}s:`, error);
-    isModelLoaded = false;
-    
-    chrome.runtime.sendMessage({
-      type: 'MODEL_ERROR',
-      error: error.message
-    }).catch(() => {});
-    
-    throw error;
-  } finally {
-    isLoading = false;
-  }
+      const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
+      isModelLoaded = true;
+      console.log(`✅ Model loaded in offscreen! Total time: ${totalTime}s`);
+
+      // Notify background
+      chrome.runtime.sendMessage({
+        type: 'MODEL_READY'
+      }).catch(() => {});
+
+    } catch (error) {
+      const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.error(`❌ Model loading failed after ${totalTime}s:`, error);
+      isModelLoaded = false;
+      
+      chrome.runtime.sendMessage({
+        type: 'MODEL_ERROR',
+        error: error.message
+      }).catch(() => {});
+      
+      throw error;
+    } finally {
+      isLoading = false;
+    }
+  })();
+
+  return loadingPromise;
 }
 
 async function classifyText(text) {

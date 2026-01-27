@@ -5,6 +5,7 @@ let isModelLoaded = false;
 let isLoading = false;
 let loadingProgress = 0;
 let offscreenReady = false;
+let initializationPromise = null; // Track ongoing initialization
 
 // Create offscreen document
 async function createOffscreenDocument() {
@@ -56,56 +57,123 @@ async function sendToOffscreen(message, retries = 3) {
   }
 }
 
-// Initialize on install
+// Initialize immediately when service worker starts
+(async () => {
+  console.log('🔄 Service worker started, initializing model...');
+  try {
+    await initializeModel();
+  } catch (error) {
+    console.error('❌ Auto-initialization failed:', error);
+  }
+})();
+
+// Initialize on install (but check if already initializing)
 chrome.runtime.onInstalled.addListener(async () => {
   console.log('📦 Extension installed');
-  await initializeModel();
+  if (!isModelLoaded && !isLoading) {
+    try {
+      await initializeModel();
+    } catch (error) {
+      console.error('❌ Install initialization failed:', error);
+    }
+  }
 });
 
-// Initialize on startup
+// Initialize on startup (but check if already initializing)
 chrome.runtime.onStartup.addListener(async () => {
   console.log('🚀 Browser started');
-  await initializeModel();
+  if (!isModelLoaded && !isLoading) {
+    try {
+      await initializeModel();
+    } catch (error) {
+      console.error('❌ Startup initialization failed:', error);
+    }
+  }
 });
 
 // Initialize model
 async function initializeModel() {
-  if (isLoading || isModelLoaded) {
-    console.log('⏩ Already loading or loaded');
-    return;
+  // If already loaded, return immediately
+  if (isModelLoaded) {
+    console.log('⏩ Model already loaded');
+    return initializationPromise || Promise.resolve();
+  }
+  
+  // If already loading, return the existing promise
+  if (isLoading && initializationPromise) {
+    console.log('⏩ Already loading, waiting for existing initialization...');
+    return initializationPromise;
   }
 
-  try {
-    isLoading = true;
+  // Start new initialization
+  isLoading = true;
+  console.log('🔄 Starting model initialization...');
 
-    // Create offscreen document
-    await createOffscreenDocument();
+  initializationPromise = (async () => {
+    try {
+      // Create offscreen document
+      await createOffscreenDocument();
 
-    // Wait a bit for offscreen to initialize
-    await new Promise(r => setTimeout(r, 200));
+      // Wait a bit for offscreen to initialize
+      await new Promise(r => setTimeout(r, 500));
 
-    // Tell offscreen to load model
-    console.log('📨 Requesting model load from offscreen...');
-    
-    const response = await sendToOffscreen({
-      type: 'LOAD_MODEL'
-    });
+      // Tell offscreen to load model
+      console.log('📨 Requesting model load from offscreen...');
+      
+      let response;
+      try {
+        response = await sendToOffscreen({
+          type: 'LOAD_MODEL'
+        });
+      } catch (sendError) {
+        // If offscreen is already loading, that's actually OK
+        if (sendError.message && sendError.message.includes('Already loading')) {
+          console.log('⏩ Offscreen already loading, waiting...');
+          // Wait a bit and check status
+          await new Promise(r => setTimeout(r, 1000));
+          const statusCheck = await sendToOffscreen({ type: 'CHECK_STATUS' });
+          if (statusCheck && statusCheck.isLoaded) {
+            response = { success: true };
+          } else {
+            throw new Error('Model still loading in offscreen');
+          }
+        } else {
+          throw sendError;
+        }
+      }
 
-    if (response && response.success) {
-      isModelLoaded = true;
-      loadingProgress = 100;
-      console.log('✅ Model initialization complete!');
-    } else {
-      throw new Error(response?.error || 'Failed to load model');
+      if (response && response.success) {
+        isModelLoaded = true;
+        loadingProgress = 100;
+        console.log('✅ Model initialization complete!');
+        
+        // Broadcast to any listening contexts
+        chrome.runtime.sendMessage({
+          type: 'MODEL_READY'
+        }).catch(() => {});
+      } else {
+        throw new Error(response?.error || 'Failed to load model');
+      }
+
+    } catch (error) {
+      console.error('❌ Initialization failed:', error);
+      isModelLoaded = false;
+      offscreenReady = false;
+      
+      // Broadcast error
+      chrome.runtime.sendMessage({
+        type: 'MODEL_ERROR',
+        error: error.message
+      }).catch(() => {});
+      
+      throw error;
+    } finally {
+      isLoading = false;
+      // Don't clear initializationPromise here, keep it for future calls
     }
+  })();
 
-  } catch (error) {
-    console.error('❌ Initialization failed:', error);
-    isModelLoaded = false;
-    offscreenReady = false;
-  } finally {
-    isLoading = false;
-  }
+  return initializationPromise;
 }
 
 // Handle messages
@@ -153,8 +221,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     // Initialize model
     if (request.type === 'INIT_MODEL') {
-      if (!isLoading && !isModelLoaded) {
-        initializeModel();
+      if (!isModelLoaded && !isLoading) {
+        initializeModel().catch(err => {
+          console.error('Init error:', err);
+        });
       }
       sendResponse({
         isLoaded: isModelLoaded,
@@ -164,42 +234,64 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       return false;
     }
 
-    // Classify text - forward to offscreen
+    // Classify text - forward to offscreen (ASYNC HANDLER)
     if (request.type === 'CLASSIFY_TEXT') {
-      if (!isModelLoaded) {
-        console.warn('⚠️ Model not ready yet');
-        sendResponse({
-          success: false,
-          error: 'Model not ready yet. Please wait.'
-        });
-        return false;
-      }
+      console.log('🔄 Classification request received');
+      
+      // Handle async logic
+      (async () => {
+        try {
+          // Double-check model is loaded
+          if (!isModelLoaded) {
+            console.warn('⚠️ Model not ready in background, checking offscreen...');
+            
+            // Query offscreen directly
+            const offscreenStatus = await sendToOffscreen({ type: 'CHECK_STATUS' });
+            
+            if (offscreenStatus && offscreenStatus.isLoaded) {
+              console.log('✅ Offscreen reports model is loaded, updating status');
+              isModelLoaded = true;
+              // Continue with classification
+            } else {
+              sendResponse({
+                success: false,
+                error: 'Model not ready yet. Please wait for initialization to complete.'
+              });
+              return;
+            }
+          }
 
-      console.log('🔄 Forwarding classification request to offscreen...');
+          console.log('🔄 Forwarding classification request to offscreen...');
 
-      // Forward to offscreen
-      sendToOffscreen(request)
-        .then(response => {
+          // Forward to offscreen
+          const response = await sendToOffscreen(request);
           console.log('✅ Got response from offscreen');
           sendResponse(response);
-        })
-        .catch(error => {
+          
+        } catch (error) {
           console.error('❌ Failed to communicate with offscreen:', error);
           sendResponse({
             success: false,
             error: 'Failed to communicate with model: ' + error.message
           });
-        });
+        }
+      })();
 
-      return true; // Keep channel open
+      return true; // Keep channel open for async response
     }
 
     // Retry loading
     if (request.type === 'RETRY_LOAD') {
+      console.log('🔄 Retry requested, resetting state...');
       isModelLoaded = false;
       isLoading = false;
       offscreenReady = false;
-      initializeModel();
+      initializationPromise = null; // Clear the promise
+      
+      initializeModel().catch(err => {
+        console.error('Retry error:', err);
+      });
+      
       sendResponse({ success: true });
       return false;
     }
