@@ -7,7 +7,8 @@ const CONFIG_PATHS = {
   'multi-thread/wllama.worker.mjs': chrome.runtime.getURL('wllama/esm/multi-thread/wllama.worker.mjs'),
 };
 
-const MODEL_URL = 'https://huggingface.co/Priyansu19/ai-slop-gemma-fp32_gguf/resolve/main/model-q4.gguf';
+const MODEL_URL = 'https://huggingface.co/distil-labs/ai-slop-detector_gguf/resolve/main/model-q4.gguf';
+
 
 let wllama = null;
 let isModelLoaded = false;
