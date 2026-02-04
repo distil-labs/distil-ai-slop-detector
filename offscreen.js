@@ -7,7 +7,7 @@ const CONFIG_PATHS = {
   'multi-thread/wllama.worker.mjs': chrome.runtime.getURL('wllama/esm/multi-thread/wllama.worker.mjs'),
 };
 
-const MODEL_URL = 'https://huggingface.co/Priyansu19/ai-slop-v4-GGUF/resolve/main/ai-slop-v4-q4_k_m.gguf';
+const MODEL_URL = 'https://huggingface.co/distil-labs/ai-slop-detector-v1-gguf/resolve/main/ai-slop-v4-q4_k_m.gguf';
 
 
 let wllama = null;
@@ -47,7 +47,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.type === 'CLASSIFY_TEXT') {
     console.log('🎯 Classification request received');
-    
+
     if (!isModelLoaded) {
       console.error('❌ Model not loaded in offscreen');
       sendResponse({ success: false, error: 'Model not loaded in offscreen' });
@@ -67,7 +67,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === 'CHECK_STATUS') {
-    sendResponse({ 
+    sendResponse({
       isLoaded: isModelLoaded,
       isLoading: isLoading
     });
@@ -83,7 +83,7 @@ async function loadModel() {
     console.log('⏩ Model already loaded in offscreen');
     return loadingPromise || Promise.resolve();
   }
-  
+
   // If already loading, return the existing promise
   if (isLoading && loadingPromise) {
     console.log('⏩ Already loading in offscreen, waiting...');
@@ -97,7 +97,7 @@ async function loadModel() {
     try {
       console.log('🦙 Initializing Wllama in offscreen...');
       console.log('⏰ Start time:', new Date().toLocaleTimeString());
-      
+
       wllama = new Wllama(CONFIG_PATHS, {
         logger: {
           debug: () => {},
@@ -123,14 +123,14 @@ async function loadModel() {
         progressCallback: ({ loaded, total }) => {
           if (total && total > 0) {
             const progress = Math.min(Math.round((loaded / total) * 100), 99);
-            
+
             // Only log every 10% to reduce spam
             if (progress >= lastProgress + 10) {
               const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
               console.log(`📊 Progress: ${progress}% (${elapsed}s elapsed)`);
               lastProgress = progress;
             }
-            
+
             // Send progress to background
             chrome.runtime.sendMessage({
               type: 'MODEL_PROGRESS',
@@ -153,12 +153,12 @@ async function loadModel() {
       const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
       console.error(`❌ Model loading failed after ${totalTime}s:`, error);
       isModelLoaded = false;
-      
+
       chrome.runtime.sendMessage({
         type: 'MODEL_ERROR',
         error: error.message
       }).catch(() => {});
-      
+
       throw error;
     } finally {
       isLoading = false;
