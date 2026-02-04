@@ -7,7 +7,7 @@ const CONFIG_PATHS = {
   'multi-thread/wllama.worker.mjs': chrome.runtime.getURL('wllama/esm/multi-thread/wllama.worker.mjs'),
 };
 
-const MODEL_URL = 'https://huggingface.co/distil-labs/ai-slop-detector_gguf/resolve/main/model-q4.gguf';
+const MODEL_URL = 'https://huggingface.co/Priyansu19/ai-slop-v4-GGUF/resolve/main/ai-slop-v4-q4_k_m.gguf';
 
 
 let wllama = null;
@@ -181,6 +181,7 @@ Classify this text as exactly 'ai_generated' or 'human_written':
 
 "${truncatedText}"
 
+Respond with ONLY one of these two words: ai_generated or human_written
 <end_of_turn>
 <start_of_turn>model
 `;
@@ -191,8 +192,9 @@ Classify this text as exactly 'ai_generated' or 'human_written':
       temp: 0.0,
       top_k: 1,
       top_p: 1.0,
+      repeat_penalty: 1.1,
     },
-    stop: ['\n', '<end_of_turn>', '<start_of_turn>'],
+    stop: ["<end_of_turn>", "<start_of_turn>", "\n", ".", " "],
   });
 
   console.log('📝 Raw output:', JSON.stringify(output));
