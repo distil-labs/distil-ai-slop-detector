@@ -64,6 +64,10 @@ Existing detectors either require API calls (privacy concern) or run models too 
 * **Fits in a browser:** small enough to load in a Chrome extension
 * **Stays accurate:** matches large model performance on the detection task
 
+### The dataset
+
+There's no strict definition of "AI slop" because lots of AI-generated text is genuinely useful and humans have been generating organic slop for centuries. The definition is mostly vibes-based, however, it's not completely meaningless either - there's a "you know it when you see it" quality to slop. To sidestep such tricky questions, we simply found an existing dataset to see if we can train a model to at least detect one flavor of slop. We used [this Kaggle dataset](https://www.kaggle.com/datasets/denvermagtibay/ai-generated-essays-dataset) to train and evaluate the model below.
+
 ### Validating the Base Model Fails
 
 We tested Gemma 3 270M out of the box on our test set.
@@ -278,10 +282,3 @@ Yes! Visit [distillabs.ai](https://www.distillabs.ai/) to discuss custom solutio
 ---
 
 *Built with [Distil Labs](https://distillabs.ai) - turn a prompt and a few examples into production-ready small language models.*
-
-
-
-
-
-
-
